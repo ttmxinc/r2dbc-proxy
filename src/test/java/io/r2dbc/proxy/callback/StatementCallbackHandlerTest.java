@@ -282,6 +282,73 @@ public class StatementCallbackHandlerTest {
 
     }
 
+    @Test
+    void executeOperationWithAddBeforeEachBindings() throws Throwable {
+        // Some callers build a batch by calling "add()" before binding each parameter set,
+        // e.g. "statement.add().bind(...)" in a fold over the rows, rather than after it.
+        LastExecutionAwareListener testListener = new LastExecutionAwareListener();
+
+        String query = "QUERY";
+        ConnectionInfo connectionInfo = MockConnectionInfo.empty();
+        StatementInfo statementInfo = MockStatementInfo.builder().updatedQuery(query).build();
+        ProxyConfig proxyConfig = ProxyConfig.builder().listener(testListener).build();
+        Statement statement = MockStatement.empty(); // make it return empty result
+        StatementCallbackHandler callback = new StatementCallbackHandler(statement, statementInfo, connectionInfo, proxyConfig);
+
+        callback.invoke(statement, ADD_METHOD, null);
+        callback.invoke(statement, BIND_BY_INDEX_METHOD, new Object[]{1, 100});
+        callback.invoke(statement, ADD_METHOD, null);
+        callback.invoke(statement, BIND_BY_INDEX_METHOD, new Object[]{1, 200});
+        Object result = callback.invoke(statement, EXECUTE_METHOD, null);
+
+        StepVerifier.create((Publisher<?>) result)
+            .verifyComplete();
+
+        assertBindingsPerParameterSet(testListener, 100, 200);
+    }
+
+    @Test
+    void executeOperationWithConsecutiveAdd() throws Throwable {
+        LastExecutionAwareListener testListener = new LastExecutionAwareListener();
+
+        String query = "QUERY";
+        ConnectionInfo connectionInfo = MockConnectionInfo.empty();
+        StatementInfo statementInfo = MockStatementInfo.builder().updatedQuery(query).build();
+        ProxyConfig proxyConfig = ProxyConfig.builder().listener(testListener).build();
+        Statement statement = MockStatement.empty(); // make it return empty result
+        StatementCallbackHandler callback = new StatementCallbackHandler(statement, statementInfo, connectionInfo, proxyConfig);
+
+        callback.invoke(statement, BIND_BY_INDEX_METHOD, new Object[]{1, 100});
+        callback.invoke(statement, ADD_METHOD, null);
+        callback.invoke(statement, ADD_METHOD, null);
+        callback.invoke(statement, BIND_BY_INDEX_METHOD, new Object[]{1, 200});
+        Object result = callback.invoke(statement, EXECUTE_METHOD, null);
+
+        StepVerifier.create((Publisher<?>) result)
+            .verifyComplete();
+
+        assertBindingsPerParameterSet(testListener, 100, 200);
+    }
+
+    /**
+     * Assert one bindings entry per bound parameter set, each holding a single index binding with the given value.
+     */
+    private static void assertBindingsPerParameterSet(LastExecutionAwareListener testListener, Object... expectedValues) {
+        QueryExecutionInfo afterQueryInfo = testListener.getAfterQueryExecutionInfo();
+        assertThat(afterQueryInfo).isNotNull();
+        assertThat(afterQueryInfo.getBindingsSize()).isEqualTo(expectedValues.length);
+        assertThat(afterQueryInfo.getQueries()).hasSize(1);
+
+        List<Bindings> bindingsList = afterQueryInfo.getQueries().get(0).getBindingsList();
+        assertThat(bindingsList).hasSize(expectedValues.length);
+
+        List<Object> boundValues = bindingsList.stream()
+            .peek(bindings -> assertThat(bindings.getIndexBindings()).hasSize(1))
+            .map(bindings -> bindings.getIndexBindings().first().getBoundValue().getValue())
+            .collect(toList());
+        assertThat(boundValues).containsExactly(expectedValues);
+    }
+
     @SuppressWarnings("unchecked")
     @Test
     void executeThenCancel() throws Throwable {
