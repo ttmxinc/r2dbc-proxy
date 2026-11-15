@@ -129,7 +129,11 @@ public final class StatementCallbackHandler extends CallbackHandlerSupport {
 
         // add, bind, bindNull, execute
         if ("add".equals(methodName)) {
-            this.currentBindingsIndex++;
+            // Only move to the next bindings when the current one has been bound.
+            // "add()" may be called before the first bind or repeatedly (e.g. "statement.add().bind(...)" per row).
+            if (this.bindings.size() > this.currentBindingsIndex) {
+                this.currentBindingsIndex++;
+            }
             return proxy;
         } else if ("execute".equals(methodName)) {
 
